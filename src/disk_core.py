@@ -1,23 +1,27 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Diskraddare v2.4  – refaktorerad och optimerad version + datum-sortering
+DiskSaverDX – Diskräddare v2.4 (refaktorerad och optimerad version + datum-sortering)
 
 Funktioner
 ──────────
 1.  Effektiviserad med en enda genomsökning av källan
 2.  Interaktiv meny med föranalys- och räddningsläge
-3.  Föranalys: totalsiffror, kategorifördelning, topp 5-mappar
+3.  Föranalys:
+    • totalsiffror
+    • kategorifördelning
+    • topp 5-mappar per kategori
+    • filtypsöversikt per ändelse (ext_stats)
 4.  Direktkopiering med
-    •   hash-baserad dubblettkontroll (SHA-256)
-    •   progressbar, timer & ETA (uppdateras var 0,2 s)
-    •   gruppering efter toppmapp (från_<mappnamn>)
-    •   valbar hantering av dolda filer, exkluderade filtyper, maxstorlek
-    •   datum-mappar (ÅR/ÅR-MÅNAD)
-    •   val om toppmapp före filtyp eller tvärtom
+    • hash-baserad dubblettkontroll (SHA-256)
+    • progressbar, timer & ETA (uppdateras var 0,2 s)
+    • gruppering efter toppmapp (från_<mappnamn>)
+    • valbar hantering av dolda filer, exkluderade filtyper, maxstorlek
+    • datum-mappar (ÅR/ÅR-MÅNAD)
+    • val om toppmapp före filtyp eller tvärtom
 5.  Auto-cleanup av tomma mappar (frågas efter kopiering)
 6.  Loggar: logg.txt, dubbletter.txt, dolda.txt, fel.txt, rensning.txt
-7.  Admin-påminnelse – kör via start_diskraddare_admin.bat för skyddade mappar
+7.  Admin-påminnelse – kör via starter_disk_auth.bat för skyddade mappar (UAC).
 """
 
 from __future__ import annotations
@@ -63,7 +67,7 @@ FILE_TYPES: Dict[str, List[str]] = {
 }
 
 ADMIN_HINT = (
-    "🛡  Kör via start_diskraddare_admin.bat om du behöver åtkomst till "
+    "🛡  Kör via starter_disk_auth.bat om du behöver åtkomst till "
     "skyddade mappar (UAC).\n"
 )
 print(ADMIN_HINT)
@@ -128,6 +132,16 @@ def category(ext: str) -> str:
 # ───────────────────────── Insamling och Analys ─────────────────────────
 
 def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
+    """
+    Skannar källan rekursivt och samlar statistik:
+
+    - all_files: list[Path]
+    - hidden_files: list[Path]
+    - tot_size: int (bytes)
+    - cats: kategori → {n, s, paths, folders}
+    - ext_stats: ändelse → {n, s, cat}
+    - dup_hint: ungefärligt antal dubbletter baserat på (filnamn, storlek)
+    """
     print("\n🔎   Genomsöker källa och analyserar filer. Detta kan ta en stund...")
     stats: dict[str, Any] = {
         "all_files": [],
@@ -138,6 +152,12 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
             "s": 0,
             "paths": [],
             "folders": defaultdict(lambda: {"n": 0, "s": 0}),
+        }),
+        # Ny: filtypsstatistik per ändelse
+        "ext_stats": defaultdict(lambda: {
+            "n": 0,
+            "s": 0,
+            "cat": "Övrigt",
         }),
     }
     dup_counter: Counter = Counter()
@@ -160,7 +180,10 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
         stats["all_files"].append(p)
         stats["tot_size"] += sz
 
-        cat_name = category(p.suffix)
+        ext = p.suffix.lower()
+        cat_name = category(ext)
+
+        # Kategoristatistik
         cat_entry = stats["cats"][cat_name]
         cat_entry["n"] += 1
         cat_entry["s"] += sz
@@ -171,6 +194,13 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
         folder_entry["n"] += 1
         folder_entry["s"] += sz
 
+        # Filtypsstatistik per ändelse
+        ext_entry = stats["ext_stats"][ext if ext else "<ingen>"]
+        ext_entry["n"] += 1
+        ext_entry["s"] += sz
+        ext_entry["cat"] = cat_name
+
+        # Grov dubblettindikator baserat på (namn, storlek)
         dup_counter[(p.name, sz)] += 1
 
     stats["dup_hint"] = sum(c - 1 for c in dup_counter.values() if c > 1)
@@ -181,13 +211,15 @@ def print_analysis(res: dict):
     print("\n── Föranalys ─────────────")
     print(f"Totalt {len(res['all_files'])} filer hittade | {human(res['tot_size'])}")
     print(f"Dolda filer: {len(res['hidden_files'])} | Dublett-indikation: {res['dup_hint']}")
-    print("Kategoriöversikt:")
+    print("\nKategoriöversikt (sorterat på storlek):")
+
     sorted_cats = sorted(res['cats'].items(), key=lambda item: item[1]['s'], reverse=True)
 
     for c, d in sorted_cats:
-        print(f"    {c:<18} {d['n']:>6} | {human(d['s'])}")
+        print(f"    {c:<18} {d['n']:>8} | {human(d['s'])}")
     print()
 
+    # Topp 5-mappar per kategori
     for c, d in sorted_cats:
         if not d['n']:
             continue
@@ -201,6 +233,22 @@ def print_analysis(res: dict):
         print(f"📂   Topp 5 mappar – {c}:")
         for fld, s in top:
             print(f"    {fld} — {s['n']} filer, {human(s['s'])}")
+        print()
+
+    # Ny: filtypsöversikt
+    if "ext_stats" in res:
+        print("Filtypsöversikt (topp 20 efter storlek):")
+        exts_sorted = sorted(
+            res["ext_stats"].items(),
+            key=lambda item: item[1]["s"],
+            reverse=True
+        )[:20]
+
+        for ext, d in exts_sorted:
+            ext_label = ext or "<ingen>"
+            print(
+                f"    {ext_label:<10} {d['n']:>8} | {human(d['s']):>10} | {d['cat']}"
+            )
         print()
 
 
@@ -378,7 +426,7 @@ signal.signal(signal.SIGINT, abort)
 # ───────────────────────── Meny (CLI) ─────────────────────────
 
 def main():
-    print("\n🎛️   Diskräddare v2.4")
+    print("\n🎛️   DiskSaverDX – Diskräddare v2.4")
     print("1. 🔍   Föranalys och sedan ev. räddning")
     print("2. 🚀   Direkt räddning (utan föranalys)")
     print("3. ❌   Avsluta")

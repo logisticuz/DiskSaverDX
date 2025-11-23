@@ -1,0 +1,124 @@
+# DiskSaverDX – Fast and Safe System Cleanup 🧹⚡
+
+DiskSaverDX is a lightweight tool designed to help users free up disk space, clean temporary files, identify large files, and safely manage clutter that accumulates over time.  
+The goal: **a cleaner, faster, and more organized computer — with zero hassle.**
+
+The project is open, modular, and built to grow over time.
+
+---
+
+## 🚀 Features
+
+### ✔ Automated cleanup
+- Cleans temporary folders  
+- Identifies cache files  
+- Supports custom scan paths
+
+### ✔ Manual review
+- List large files  
+- Mark and delete selected items  
+- Safety checks before deletion
+
+### ✔ Logs & reports
+- Action logging  
+- Summary of freed disk space  
+- Report export (planned)
+
+### ✔ Modularity (future versions)
+- Plugin system  
+- Premium features  
+- Smart scanning
+
+---
+
+## 🛠 Technical Overview
+
+- **Language:** *(fill depending on implementation – e.g., Python/C#/Node)*  
+- **Platform:** Windows  
+- **License:** MIT  
+- **Project structure:**
+
+```
+/src
+  /core        → core logic (cleaning, scanning)
+  /ui          → CLI/GUI (depending on implementation)
+  /utils       → helper classes
+/logs
+/config
+README.md
+LICENSE
+```
+
+---
+
+## 📦 Installation
+
+### Clone the project
+```bash
+git clone https://github.com/<your-user>/DiskSaverDX.git
+cd DiskSaverDX
+```
+
+### Install dependencies (example: Python)
+```bash
+pip install -r requirements.txt
+```
+
+### Run the application
+```bash
+python main.py
+```
+
+---
+
+## 🧪 Testing
+```bash
+pytest tests/
+```
+
+---
+
+## 🗺 Roadmap
+
+### MVP (current)
+- Basic cleanup  
+- Large file listing  
+- Logging  
+
+### Upcoming
+- GUI mode  
+- Advanced analysis  
+- Scheduled automation  
+- File system monitoring  
+- Plugin support  
+- Statistics & visualizations  
+- Premium tier / ad placements  
+
+---
+
+## 🔒 Privacy & Tracking
+
+The MVP collects **no user data whatsoever**.
+
+Planned for future:
+- Optional anonymous usage analytics  
+- Transparent tracking (Plausible, Umami, or self-hosted)  
+- Clear privacy policy  
+
+---
+
+## 🤝 Contributing
+
+Pull requests and suggestions are welcome!
+
+1. Fork the repository  
+2. Create a feature branch  
+3. Make your changes  
+4. Submit a PR  
+
+---
+
+## 📄 License
+
+This project is licensed under **MIT**.  
+See `LICENSE` for details.

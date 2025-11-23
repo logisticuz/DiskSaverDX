@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtuell miljö
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# VS Code
+.vscode/
+
+# OS-filer
+.DS_Store
+Thumbs.db
+
+# Loggfiler som genereras av DiskSaverDX
+logg.txt
+dubbletter.txt
+dolda.txt
+fel.txt
+rensning.txt
