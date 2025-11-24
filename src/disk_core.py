@@ -1,27 +1,27 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DiskSaverDX – Diskräddare v2.4 (refaktorerad och optimerad version + datum-sortering)
+DiskSaverDX – DiskSaver v2.5 (refactored version with date sorting)
 
-Funktioner
-──────────
-1.  Effektiviserad med en enda genomsökning av källan
-2.  Interaktiv meny med föranalys- och räddningsläge
-3.  Föranalys:
-    • totalsiffror
-    • kategorifördelning
-    • topp 5-mappar per kategori
-    • filtypsöversikt per ändelse (ext_stats)
-4.  Direktkopiering med
-    • hash-baserad dubblettkontroll (SHA-256)
-    • progressbar, timer & ETA (uppdateras var 0,2 s)
-    • gruppering efter toppmapp (från_<mappnamn>)
-    • valbar hantering av dolda filer, exkluderade filtyper, maxstorlek
-    • datum-mappar (ÅR/ÅR-MÅNAD)
-    • val om toppmapp före filtyp eller tvärtom
-5.  Auto-cleanup av tomma mappar (frågas efter kopiering)
-6.  Loggar: logg.txt, dubbletter.txt, dolda.txt, fel.txt, rensning.txt
-7.  Admin-påminnelse – kör via starter_disk_auth.bat för skyddade mappar (UAC).
+Features
+────────
+1.  Single pass scan of the source folder
+2.  Interactive CLI menu with pre-analysis and recovery modes
+3.  Pre-analysis:
+    • total counts
+    • per-category distribution
+    • top 5 folders per category
+    • file type overview per extension (ext_stats)
+4.  Direct copy with:
+    • hash-based duplicate detection (SHA-256)
+    • progress bar, timer & ETA (updated every 0.2 s)
+    • grouping by top folder (from_<folder_name>)
+    • configurable handling of hidden files, excluded extensions, max size
+    • date folders (YEAR/YEAR-MONTH)
+    • choice of top folder before/after category
+5.  Auto-cleanup of empty folders (optional after copy)
+6.  Logs: log.txt, duplicates.txt, hidden.txt, errors.txt, cleanup.txt
+7.  Admin reminder – run via starter_disk_auth.bat for protected folders (UAC).
 """
 
 from __future__ import annotations
@@ -38,55 +38,60 @@ from typing import Dict, List, Tuple, Any, Optional, Callable
 from collections import defaultdict, Counter
 from datetime import datetime
 
-# --------------  KONSTANTER  --------------
+# --------------  CONSTANTS  --------------
 HIDDEN_PREFIX = "."
-BAR_WIDTH      = 30
-HASH_CHUNK     = 1 << 20
-REFRESH_RATE   = 0.2
+BAR_WIDTH = 30
+HASH_CHUNK = 1 << 20
+REFRESH_RATE = 0.2
 
 FILE_TYPES: Dict[str, List[str]] = {
     "Videos": [
         ".mp4", ".avi", ".mov", ".mpg", ".mpeg",
         ".wmv", ".flv", ".mkv", ".qt",
     ],
-    "Bilder": [
+    "Images": [
         ".jpg", ".jpeg", ".bmp", ".gif", ".png", ".tiff",
         ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".dng",
     ],
     "Audio": [
         ".mp3", ".wav", ".wma", ".aac", ".ogg", ".mid",
     ],
-    "Dokument": [
+    "Documents": [
         ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
         ".pdf", ".txt", ".rtf", ".odt", ".csv",
     ],
-    "Installationsfiler": [
+    "Installers": [
         ".exe", ".msi", ".iso", ".zip", ".rar", ".7z", ".tar", ".gz",
     ],
     "Torrents": [".torrent"],
 }
 
 ADMIN_HINT = (
-    "🛡  Kör via starter_disk_auth.bat om du behöver åtkomst till "
-    "skyddade mappar (UAC).\n"
+    "🛡  Tip: run via starter_disk_auth.bat if you need access to "
+    "protected folders (UAC).\n"
 )
 print(ADMIN_HINT)
 
 
-# ───────────────────  I/O-hjälpare  ───────────────────
+# ───────────────────  I/O HELPERS  ───────────────────
 
 def ask_path(prompt: str) -> Path:
+    """Ask for an existing path on disk."""
     while True:
         p = Path(input(prompt).strip().strip('"\'')).resolve()
         if p.exists():
             return p
-        print("❌  Sökvägen finns inte. Försök igen.")
+        print("❌  Path does not exist. Try again.")
+
 
 def ask_yes(question: str) -> bool:
-    return input(f"{question} (j/n): ").strip().lower() == "j"
+    """Simple yes/no question, expects y/n."""
+    return input(f"{question} (y/n): ").strip().lower() == "y"
+
 
 def ask_size() -> int | None:
-    raw = input("Max filstorlek (ex 2GB, 500MB) – Enter för ingen: ").lower().strip()
+    """Ask for a maximum file size like '2GB' or '500MB'. Empty for no limit."""
+    raw = input("Max file size (e.g. 2GB, 500MB) – press Enter for no limit: ").lower().strip()
     if not raw:
         return None
     num = ''.join(c for c in raw if c.isdigit() or c == '.')
@@ -94,22 +99,25 @@ def ask_size() -> int | None:
     try:
         val = float(num)
     except ValueError:
-        print("❌  Ogiltigt tal.")
+        print("❌  Invalid number.")
         return ask_size()
     fac = {"kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4}.get(unit)
     if not fac:
-        print("❌  Ogiltig enhet (använd KB, MB, GB eller TB).")
+        print("❌  Invalid unit (use KB, MB, GB or TB).")
         return ask_size()
     return int(val * fac)
 
+
 def ask_excl() -> set[str]:
-    raw = input("Filändelser att exkludera (.exe,.zip) – Enter för inga: ")
+    """Ask for extensions to exclude, e.g. '.exe,.zip'."""
+    raw = input("Extensions to exclude (.exe,.zip) – press Enter for none: ")
     return {e.strip().lower() for e in raw.split(',') if e.strip()} if raw else set()
 
 
-# ───────────────────  Utils  ───────────────────
+# ───────────────────  UTILS  ───────────────────
 
 def human(b: int | None) -> str:
+    """Format bytes as a human readable string."""
     if b is None:
         return "0 B"
     for u in ("B", "KB", "MB", "GB", "TB"):
@@ -117,32 +125,49 @@ def human(b: int | None) -> str:
             return f"{b:.1f} {u}"
         b /= 1024
 
+
+def format_duration(seconds: int | None) -> str:
+    """Format seconds as '45s', '3m 20s', '1h 12m' etc."""
+    if seconds is None or seconds <= 0:
+        return "0s"
+    mins, sec = divmod(int(seconds), 60)
+    if mins == 0:
+        return f"{sec}s"
+    hours, mins = divmod(mins, 60)
+    if hours == 0:
+        return f"{mins}m {sec}s"
+    return f"{hours}h {mins}m"
+
+
 def sha256(fp: Path) -> str:
+    """Calculate SHA-256 hash for a file."""
     h = hashlib.sha256()
     with fp.open('rb') as f:
         for chunk in iter(lambda: f.read(HASH_CHUNK), b''):
             h.update(chunk)
     return h.hexdigest()
 
+
 def category(ext: str) -> str:
+    """Map file extension to a logical category."""
     ext = ext.lower()
-    return next((c for c, exts in FILE_TYPES.items() if ext in exts), "Övrigt")
+    return next((c for c, exts in FILE_TYPES.items() if ext in exts), "Other")
 
 
-# ───────────────────────── Insamling och Analys ─────────────────────────
+# ───────────────────────── COLLECTION & ANALYSIS ─────────────────────────
 
 def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
     """
-    Skannar källan rekursivt och samlar statistik:
+    Recursively scan the source folder and collect statistics:
 
     - all_files: list[Path]
     - hidden_files: list[Path]
     - tot_size: int (bytes)
-    - cats: kategori → {n, s, paths, folders}
-    - ext_stats: ändelse → {n, s, cat}
-    - dup_hint: ungefärligt antal dubbletter baserat på (filnamn, storlek)
+    - cats: category → {n, s, paths, folders}
+    - ext_stats: extension → {n, s, cat}
+    - dup_hint: rough duplicate count based on (filename, size)
     """
-    print("\n🔎   Genomsöker källa och analyserar filer. Detta kan ta en stund...")
+    print("\n🔎   Scanning source and analyzing files. This may take a while...")
     stats: dict[str, Any] = {
         "all_files": [],
         "hidden_files": [],
@@ -153,11 +178,11 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
             "paths": [],
             "folders": defaultdict(lambda: {"n": 0, "s": 0}),
         }),
-        # Ny: filtypsstatistik per ändelse
+        # File type statistics per extension
         "ext_stats": defaultdict(lambda: {
             "n": 0,
             "s": 0,
-            "cat": "Övrigt",
+            "cat": "Other",
         }),
     }
     dup_counter: Counter = Counter()
@@ -183,7 +208,7 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
         ext = p.suffix.lower()
         cat_name = category(ext)
 
-        # Kategoristatistik
+        # Per-category statistics
         cat_entry = stats["cats"][cat_name]
         cat_entry["n"] += 1
         cat_entry["s"] += sz
@@ -194,13 +219,14 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
         folder_entry["n"] += 1
         folder_entry["s"] += sz
 
-        # Filtypsstatistik per ändelse
-        ext_entry = stats["ext_stats"][ext if ext else "<ingen>"]
+        # File type statistics per extension
+        ext_key = ext if ext else "<none>"
+        ext_entry = stats["ext_stats"][ext_key]
         ext_entry["n"] += 1
         ext_entry["s"] += sz
         ext_entry["cat"] = cat_name
 
-        # Grov dubblettindikator baserat på (namn, storlek)
+        # Rough duplicate indicator based on (name, size)
         dup_counter[(p.name, sz)] += 1
 
     stats["dup_hint"] = sum(c - 1 for c in dup_counter.values() if c > 1)
@@ -208,10 +234,11 @@ def collect_and_analyse(src: Path, incl_hidden: bool) -> dict[str, Any]:
 
 
 def print_analysis(res: dict):
-    print("\n── Föranalys ─────────────")
-    print(f"Totalt {len(res['all_files'])} filer hittade | {human(res['tot_size'])}")
-    print(f"Dolda filer: {len(res['hidden_files'])} | Dublett-indikation: {res['dup_hint']}")
-    print("\nKategoriöversikt (sorterat på storlek):")
+    """Pretty-print the collected analysis to the CLI."""
+    print("\n── Pre-analysis ─────────────")
+    print(f"Total files: {len(res['all_files'])} | {human(res['tot_size'])}")
+    print(f"Hidden files: {len(res['hidden_files'])} | Duplicate hint: {res['dup_hint']}")
+    print("\nCategory overview (sorted by size):")
 
     sorted_cats = sorted(res['cats'].items(), key=lambda item: item[1]['s'], reverse=True)
 
@@ -219,7 +246,7 @@ def print_analysis(res: dict):
         print(f"    {c:<18} {d['n']:>8} | {human(d['s'])}")
     print()
 
-    # Topp 5-mappar per kategori
+    # Top 5 folders per category
     for c, d in sorted_cats:
         if not d['n']:
             continue
@@ -230,14 +257,14 @@ def print_analysis(res: dict):
             reverse=True
         )[:5]
 
-        print(f"📂   Topp 5 mappar – {c}:")
+        print(f"📂   Top 5 folders – {c}:")
         for fld, s in top:
-            print(f"    {fld} — {s['n']} filer, {human(s['s'])}")
+            print(f"    {fld} — {s['n']} files, {human(s['s'])}")
         print()
 
-    # Ny: filtypsöversikt
+    # File type overview
     if "ext_stats" in res:
-        print("Filtypsöversikt (topp 20 efter storlek):")
+        print("File type overview (top 20 by size):")
         exts_sorted = sorted(
             res["ext_stats"].items(),
             key=lambda item: item[1]["s"],
@@ -245,24 +272,29 @@ def print_analysis(res: dict):
         )[:20]
 
         for ext, d in exts_sorted:
-            ext_label = ext or "<ingen>"
+            ext_label = ext or "<none>"
             print(
                 f"    {ext_label:<10} {d['n']:>8} | {human(d['s']):>10} | {d['cat']}"
             )
         print()
 
 
-# ───────────────────────── Progress-utskrifter ─────────────────────────
+# ───────────────────────── PROGRESS PRINTING ─────────────────────────
 
 class Progress:
-    def __init__(self, total: int,
-                 callback: Optional[Callable[[int, int, int, int, Optional[Path]], None]] = None):
+    """Simple CLI progress bar with elapsed time and ETA, plus optional callback."""
+
+    def __init__(
+        self,
+        total: int,
+        callback: Optional[Callable[[int, int, int, int, Optional[Path]], None]] = None
+    ):
         self.t0 = time.time()
         self.total = total
         self.done = 0
         self._lock = threading.Lock()
         self._last_update = 0.0
-        self._cb = callback  # för GUI
+        self._cb = callback  # for GUI progress callback
 
     def step(self, current_path: Optional[Path] = None):
         with self._lock:
@@ -277,24 +309,28 @@ class Progress:
                 spd = self.done / elapsed if elapsed else 0
                 eta = int((self.total - self.done) / spd) if spd else 0
 
-                # CLI-progress
+                elapsed_str = format_duration(elapsed)
+                eta_str = format_duration(eta)
+
+                # CLI progress
                 sys.stdout.write(
                     f"\r📦 [{bar}] {pct*100:5.1f}% {self.done}/{self.total} "
-                    f"| ⏱ {elapsed}s | ETA {eta}s "
+                    f"| ⏱ {elapsed_str} | ETA {eta_str} "
                 )
                 sys.stdout.flush()
                 if self.done == self.total:
                     print()
 
-                # GUI-callback (om satt)
+                # GUI callback (if set)
                 if self._cb is not None:
                     try:
                         self._cb(self.done, self.total, elapsed, eta, current_path)
                     except Exception:
+                        # GUI errors should not kill CLI run
                         pass
 
 
-# ───────────────────────── Kopierings-logik ─────────────────────────
+# ───────────────────────── COPY LOGIC ─────────────────────────
 
 def copy_phase(
     files_to_copy: List[Path],
@@ -309,16 +345,22 @@ def copy_phase(
     top_before_type: bool,
     progress_cb: Optional[Callable[[int, int, int, int, Optional[Path]], None]] = None,
 ) -> Tuple[int, int, int]:
+    """
+    Core copy phase.
+
+    Returns:
+        (copied, duplicates, failures)
+    """
 
     prog = Progress(len(files_to_copy), callback=progress_cb)
     hashes: dict[str, Path] = {}
     copied = dups = fails = skipped = 0
 
     with (
-        open('logg.txt', 'w', encoding='utf-8') as log,
-        open('dubbletter.txt', 'w', encoding='utf-8') as dlog,
-        open('fel.txt', 'w', encoding='utf-8') as elog,
-        open('dolda.txt', 'w', encoding='utf-8') as dolda_log
+        open('log.txt', 'w', encoding='utf-8') as log,
+        open('duplicates.txt', 'w', encoding='utf-8') as dlog,
+        open('errors.txt', 'w', encoding='utf-8') as elog,
+        open('hidden.txt', 'w', encoding='utf-8') as hidden_log
     ):
         for fp in files_to_copy:
             try:
@@ -346,7 +388,7 @@ def copy_phase(
                 cat_name = category(ext)
 
                 rel_parts = fp.relative_to(src).parts
-                top_folder_name = rel_parts[0] if len(rel_parts) > 1 else "roten"
+                top_folder_name = rel_parts[0] if len(rel_parts) > 1 else "root"
 
                 dest_dir = dst
 
@@ -358,22 +400,22 @@ def copy_phase(
                     dest_dir = dest_dir / year / period
 
                 if group_top and top_before_type:
-                    dest_dir = dest_dir / f"från_{top_folder_name}"
+                    dest_dir = dest_dir / f"from_{top_folder_name}"
 
                 dest_dir = dest_dir / cat_name
 
                 if group_top and not top_before_type:
-                    dest_dir = dest_dir / f"från_{top_folder_name}"
+                    dest_dir = dest_dir / f"from_{top_folder_name}"
 
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest_path = dest_dir / fp.name
 
                 if dest_path.exists() or (h and h in hashes):
-                    copy_dir = dest_dir / "Kopior"
+                    copy_dir = dest_dir / "Copies"
                     copy_dir.mkdir(parents=True, exist_ok=True)
                     i = 1
                     while True:
-                        new_name = f"{fp.stem}_dubblett{i}{fp.suffix}"
+                        new_name = f"{fp.stem}_duplicate{i}{fp.suffix}"
                         candidate = copy_dir / new_name
                         if not candidate.exists():
                             dest_path = candidate
@@ -393,13 +435,14 @@ def copy_phase(
             finally:
                 prog.step(current_path=fp)
 
-    print(f"Hoppade över {skipped} filer p.g.a. filter.")
+    print(f"Skipped {skipped} files due to filters.")
     return copied, dups, fails
 
 
-# ───────────────────  Cleanup tomma mappar  ───────────────────
+# ───────────────────  CLEANUP EMPTY FOLDERS  ───────────────────
 
 def cleanup_empty(dst: Path) -> None:
+    """Remove all empty folders under dst and log the result."""
     removed = 0
     for d, _, _ in os.walk(dst, topdown=False):
         p = Path(d)
@@ -409,66 +452,69 @@ def cleanup_empty(dst: Path) -> None:
                 removed += 1
         except OSError:
             continue
-    with open("rensning.txt", "a", encoding="utf-8") as f:
+    with open("cleanup.txt", "a", encoding="utf-8") as f:
         f.write(f"Removed {removed} dirs {datetime.now()}\n")
-    print(f"🧹  Tog bort {removed} tomma mappar\n")
+    print(f"🧹  Removed {removed} empty folders\n")
 
 
-# ───────────────────  Ctrl-C  ───────────────────
+# ───────────────────  CTRL-C HANDLING  ───────────────────
 
 def abort(sig, frame):
-    print("\n⛔  Avbrutet av användaren – loggar sparade, men processen slutfördes inte.")
+    print("\n⛔  Aborted by user – logs are saved, but the process did not complete.")
     sys.exit(1)
+
 
 signal.signal(signal.SIGINT, abort)
 
 
-# ───────────────────────── Meny (CLI) ─────────────────────────
+# ───────────────────────── CLI MENU ─────────────────────────
 
 def main():
-    print("\n🎛️   DiskSaverDX – Diskräddare v2.4")
-    print("1. 🔍   Föranalys och sedan ev. räddning")
-    print("2. 🚀   Direkt räddning (utan föranalys)")
-    print("3. ❌   Avsluta")
-    choice = input("Val (1/2/3): ").strip()
+    print("\n🎛️   DiskSaverDX – DiskSaver v2.5")
+    print("1. 🔍   Pre-analysis and then optional recovery")
+    print("2. 🚀   Direct recovery (without pre-analysis)")
+    print("3. ❌   Exit")
+    choice = input("Choice (1/2/3): ").strip()
 
     if choice == '3':
         sys.exit()
     if choice not in ('1', '2'):
-        print("Ogiltigt val.")
+        print("Invalid choice.")
         return
 
-    src = ask_path("📂   Källa: ")
+    src = ask_path("📂   Source: ")
 
+    # Always collect analysis once (even for direct mode),
+    # so we can reuse its file list.
     analysis_results = collect_and_analyse(src, incl_hidden=True)
 
     if choice == '1':
         print_analysis(analysis_results)
-        if not ask_yes("Fortsätt till räddning?"):
+        if not ask_yes("Continue to recovery?"):
             sys.exit()
 
-    print("\n⚙️   Inställningar för räddning:")
+    print("\n⚙️   Recovery settings:")
     dst = ask_path("📁   Destination: ")
 
-    incl_hidden = ask_yes("Inkludera dolda filer i kopieringen?")
+    incl_hidden = ask_yes("Include hidden files in recovery?")
     max_sz = ask_size()
     excl = ask_excl()
 
-    group_top = ask_yes("Gruppera efter toppmapp (från_<mappnamn>)?")
+    group_top = ask_yes("Group by top folder (from_<folder_name>)?")
 
     top_before_type = False
     if group_top:
         top_before_type = ask_yes(
-            "📂 Toppmapp före filtyp? "
-            "(j = ÅR/ÅR-MÅNAD/från_<mapp>/Bilder, "
-            "n = ÅR/ÅR-MÅNAD/Bilder/från_<mapp>)"
+            "📂 Top folder before category? "
+            "(y = YEAR/YEAR-MONTH/from_<folder>/Images, "
+            "n = YEAR/YEAR-MONTH/Images/from_<folder>)"
         )
 
-    use_date_folders = ask_yes("📅 Sortera filer i datum-mappar (ÅR/ÅR-MÅNAD)?")
-    use_hash = ask_yes("Aktivera hash-dubblettkontroll (långsammare men säkrare)?")
+    use_date_folders = ask_yes("📅 Sort files into date folders (YEAR/YEAR-MONTH)?")
+    use_hash = ask_yes("Enable hash-based duplicate check (slower but safer)?")
     hash_only = False
     if use_hash:
-        hash_only = ask_yes("Endast dubblettanalys (ingen kopiering)?")
+        hash_only = ask_yes("Duplicates analysis only (no copying)?")
 
     if incl_hidden:
         files_to_process = analysis_results['all_files']
@@ -476,21 +522,21 @@ def main():
         hidden_set = set(analysis_results['hidden_files'])
         files_to_process = [f for f in analysis_results['all_files'] if f not in hidden_set]
 
-    print("\n─── Sammanfattning före start ───")
-    print(f"Källa: {src}")
+    print("\n─── Summary before start ───")
+    print(f"Source: {src}")
     print(f"Destination: {dst}")
-    print(f"Antal filer att bearbeta: {len(files_to_process)}")
-    print(f"Inkludera dolda: {'Ja' if incl_hidden else 'Nej'}")
-    print(f"Max filstorlek: {human(max_sz) if max_sz is not None else 'Obegränsad'}")
-    print(f"Exkluderade filtyper: {excl if excl else 'Inga'}")
-    print(f"Hash-kontroll: {'Ja' if use_hash else 'Nej'}")
-    print(f"Datum-mappar: {'Ja' if use_date_folders else 'Nej'}")
-    print(f"Toppmapp före filtyp: {'Ja' if (group_top and top_before_type) else 'Nej'}")
-    if not ask_yes("\nÄr du redo att starta processen?"):
-        print("Avbryter.")
+    print(f"Files to process: {len(files_to_process)}")
+    print(f"Include hidden: {'Yes' if incl_hidden else 'No'}")
+    print(f"Max file size: {human(max_sz) if max_sz is not None else 'Unlimited'}")
+    print(f"Excluded extensions: {excl if excl else 'None'}")
+    print(f"Hash check: {'Yes' if use_hash else 'No'}")
+    print(f"Date folders: {'Yes' if use_date_folders else 'No'}")
+    print(f"Top folder before category: {'Yes' if (group_top and top_before_type) else 'No'}")
+    if not ask_yes("\nReady to start the process?"):
+        print("Aborting.")
         sys.exit()
 
-    print("\n🚀   Startar processen...")
+    print("\n🚀   Starting process...")
     copied, dups, fails = copy_phase(
         files_to_copy=files_to_process,
         src=src,
@@ -502,16 +548,16 @@ def main():
         group_top=group_top,
         use_date_folders=use_date_folders,
         top_before_type=top_before_type,
-        progress_cb=None,  # CLI använder bara text-progress
+        progress_cb=None,  # CLI uses text progress only
     )
 
-    print("\n✨   Processen är klar!")
+    print("\n✨   Process completed!")
     if not hash_only:
-        print(f"Kopierade: {copied}")
-    print(f"Dubbletter hittade: {dups}")
-    print(f"Fel: {fails}")
+        print(f"Copied: {copied}")
+    print(f"Duplicates found: {dups}")
+    print(f"Errors: {fails}")
 
-    if not hash_only and copied > 0 and ask_yes("\nVill du köra en städning av tomma mappar i destinationen?"):
+    if not hash_only and copied > 0 and ask_yes("\nRun cleanup of empty folders in destination?"):
         cleanup_empty(dst)
 
 
@@ -519,5 +565,5 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nAvbrutet av användaren. Hej då!")
+        print("\n\nAborted by user. Bye!")
         sys.exit(0)
