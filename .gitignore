@@ -23,3 +23,9 @@ dubbletter.txt
 dolda.txt
 fel.txt
 rensning.txt
+
+log.txt
+errors.txt
+duplicates.txt
+hidden.txt
+*.log
