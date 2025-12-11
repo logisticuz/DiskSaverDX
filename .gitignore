@@ -29,3 +29,6 @@ errors.txt
 duplicates.txt
 hidden.txt
 *.log
+
+# Tillfällig refaktorering (låt ligga lokalt, tracka ej)
+refact/
