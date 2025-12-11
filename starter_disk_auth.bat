@@ -1,16 +1,26 @@
 @echo off
 SETLOCAL ENABLEEXTENSIONS
 
-:: Namn på din Python-fil
-SET script_name=diskdisk.py
+REM Root folder = where this .bat is located
+set "ROOT=%~dp0"
 
-:: Kontroll: Finns Python?
-where python >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Python hittades inte i PATH. Avbryter.
+REM Path to venv python
+set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
+
+REM Path to GUI script
+set "GUI_SCRIPT=%ROOT%src\disk_gui.py"
+
+REM Verify venv python
+if not exist "%VENV_PY%" (
+    echo ❌ Could not find virtualenv python:
+    echo    "%VENV_PY%"
+    echo Make sure your venv is named .venv at the repo root.
     pause
-    exit /b
+    exit /b 1
 )
 
-:: Starta med administratörsrättigheter
-powershell -Command "Start-Process python -ArgumentList '%script_name%' -Verb RunAs"
+REM Start GUI hidden as administrator (no terminal window)
+powershell -WindowStyle Hidden -Command ^
+    "Start-Process '%VENV_PY%' -ArgumentList @('%GUI_SCRIPT%') -Verb RunAs -WindowStyle Hidden"
+
+EXIT /B

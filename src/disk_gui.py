@@ -7,6 +7,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from pathlib import Path
 from typing import Set, Optional
+import os
+import sys
+import subprocess
 
 # Import your backend
 from disk_core import (
@@ -37,20 +40,44 @@ def setup_dark_theme(root: tk.Tk):
     # Base
     style.configure(".", background=bg, foreground=fg, fieldbackground=bg)
 
-    # Specific widgets
-    style.configure("TFrame", background=bg)
-    style.configure("TLabelframe", background=bg, foreground=fg)
-    style.configure("TLabelframe.Label", background=bg, foreground=fg)
+    # Frames / group boxes – flat look
+    style.configure(
+        "TFrame",
+        background=bg,
+        borderwidth=0,
+        relief="flat",
+    )
+    style.configure(
+        "TLabelframe",
+        background=bg,
+        foreground=fg,
+        borderwidth=1,
+        relief="groove",
+    )
+    style.configure(
+        "TLabelframe.Label",
+        background=bg,
+        foreground=fg,
+    )
 
+    # Basic text & checkbuttons
     style.configure("TLabel", background=bg, foreground=fg)
     style.configure("TCheckbutton", background=bg, foreground=fg)
-    style.configure("TButton", background="#2d2d30", foreground=fg, padding=4)
+
+    # Buttons – consistent size
+    style.configure(
+        "TButton",
+        background="#2d2d30",
+        foreground=fg,
+        padding=(8, 4),
+    )
     style.map(
         "TButton",
         background=[("active", "#3e3e40")],
         foreground=[("disabled", "#888888")],
     )
 
+    # Progressbar
     style.configure(
         "Horizontal.TProgressbar",
         troughcolor=bg2,
@@ -60,13 +87,14 @@ def setup_dark_theme(root: tk.Tk):
         darkcolor=accent,
     )
 
+    # Treeview rows
     style.configure(
         "Treeview",
         background=bg2,
         foreground=fg,
         fieldbackground=bg2,
         bordercolor=bg,
-        rowheight=22,
+        rowheight=20,
     )
     style.map(
         "Treeview",
@@ -74,20 +102,35 @@ def setup_dark_theme(root: tk.Tk):
         foreground=[("selected", "#ffffff")],
     )
 
+    # Treeview headings – higher contrast
+    style.configure(
+        "Treeview.Heading",
+        background="#3b3b3d",
+        foreground="#ffffff",
+        font=("Segoe UI", 9, "bold"),
+    )
+    style.map(
+        "Treeview.Heading",
+        background=[("active", "#505052")],
+    )
+
+    # Scrollbars – slimmer
     style.configure(
         "Vertical.TScrollbar",
         background=bg2,
         troughcolor=bg,
         arrowcolor=fg,
+        width=10,
     )
     style.configure(
         "Horizontal.TScrollbar",
         background=bg2,
         troughcolor=bg,
         arrowcolor=fg,
+        width=10,
     )
 
-    # ---- NEW: clearer tabs for notebooks ----
+    # Notebook / tabs
     style.configure(
         "TNotebook",
         background=bg,
@@ -95,22 +138,21 @@ def setup_dark_theme(root: tk.Tk):
     )
     style.configure(
         "TNotebook.Tab",
-        background=bg2,     # mörkare bakgrund
-        foreground=fg,      # ljus text
-        padding=(12, 4),    # lite mer luft runt texten
+        background=bg2,
+        foreground=fg,
+        padding=(10, 3),
     )
     style.map(
         "TNotebook.Tab",
         background=[
-            ("selected", "#3e3e40"),   # tydligt vald tab
+            ("selected", "#4a4a4d"),   # clearer active tab
             ("active", "#333333"),
         ],
         foreground=[
-            ("selected", "#ffffff"),   # ren vit text på vald tab
+            ("selected", "#ffffff"),
             ("!selected", fg),
-        ]
+        ],
     )
-
 
 
 class ToolTip:
@@ -220,7 +262,8 @@ class DiskraddareGUI:
     # ----------- UI construction -----------
 
     def _build_ui(self):
-        pad = {"padx": 5, "pady": 5}
+        # Tight but readable padding
+        pad = {"padx": 3, "pady": 3}
 
         # Source / destination
         frame_paths = ttk.LabelFrame(self.root, text="Paths")
@@ -251,7 +294,7 @@ class DiskraddareGUI:
         frame_opts.columnconfigure(0, weight=1)
 
         options_notebook = ttk.Notebook(frame_opts)
-        options_notebook.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        options_notebook.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
 
         # --- Basic tab ---
         tab_basic = ttk.Frame(options_notebook)
@@ -369,18 +412,34 @@ class DiskraddareGUI:
         frame_buttons = ttk.Frame(self.root)
         frame_buttons.grid(row=2, column=0, sticky="ew", **pad)
 
-        ttk.Button(
+        btn_analyze = ttk.Button(
             frame_buttons, text="🔍 Scan & analyze", command=self.run_analysis
-        ).grid(row=0, column=0, **pad)
-        ttk.Button(
+        )
+        btn_analyze.grid(row=0, column=0, **pad)
+
+        btn_recover = ttk.Button(
             frame_buttons, text="🚀 Run recovery", command=self.run_recovery
-        ).grid(row=0, column=1, **pad)
-        ttk.Button(
+        )
+        btn_recover.grid(row=0, column=1, **pad)
+
+        btn_csv = ttk.Button(
             frame_buttons, text="📄 Export report (CSV)", command=self.export_csv
-        ).grid(row=0, column=2, **pad)
-        ttk.Button(
+        )
+        btn_csv.grid(row=0, column=2, **pad)
+
+        btn_json = ttk.Button(
             frame_buttons, text="📄 Export report (JSON)", command=self.export_json
-        ).grid(row=0, column=3, **pad)
+        )
+        btn_json.grid(row=0, column=3, **pad)
+
+        btn_logs = ttk.Button(
+            frame_buttons, text="📁 Open log folder", command=self.open_log_folder
+        )
+        btn_logs.grid(row=0, column=4, **pad)
+        ToolTip(
+            btn_logs,
+            "Open the folder where log.txt, duplicates.txt, errors.txt and other logs are stored.",
+        )
 
         # ---------- ANALYSIS / NOTEBOOK + LOG ----------
         frame_log = ttk.LabelFrame(self.root, text="Analysis, file types & log")
@@ -391,7 +450,7 @@ class DiskraddareGUI:
         frame_log.columnconfigure(0, weight=1)
 
         notebook = ttk.Notebook(frame_log)
-        notebook.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        notebook.grid(row=0, column=0, sticky="nsew", padx=3, pady=3)
 
         # --- Categories tab ---
         tab_cats = ttk.Frame(notebook)
@@ -459,7 +518,7 @@ class DiskraddareGUI:
 
         # View mode radio buttons
         view_frame = ttk.Frame(tab_top)
-        view_frame.grid(row=0, column=0, sticky="w", padx=5, pady=(5, 0))
+        view_frame.grid(row=0, column=0, sticky="w", padx=3, pady=(3, 0))
 
         ttk.Label(view_frame, text="View:").grid(row=0, column=0, padx=(0, 5))
 
@@ -481,6 +540,15 @@ class DiskraddareGUI:
         )
         rb_global.grid(row=0, column=2)
 
+        ToolTip(
+            rb_per_cat,
+            "Shows top 5 folders for each category separately (Images, Videos, etc).",
+        )
+        ToolTip(
+            rb_global,
+            "Shows the 100 largest folders overall, across all categories.",
+        )
+
         top_columns = ("folder", "files", "size", "category")
         self.top_folders_tree = ttk.Treeview(
             tab_top,
@@ -497,19 +565,22 @@ class DiskraddareGUI:
         self.top_folders_tree.column("files", width=70, anchor="e")
         self.top_folders_tree.column("size", width=110, anchor="e")
         self.top_folders_tree.column("category", width=120, anchor="w")
-        self.top_folders_tree.grid(row=1, column=0, sticky="nsew", padx=0, pady=(5, 0))
+        self.top_folders_tree.grid(row=1, column=0, sticky="nsew", padx=0, pady=(3, 0))
 
         top_scroll = ttk.Scrollbar(
             tab_top, orient="vertical", command=self.top_folders_tree.yview
         )
-        top_scroll.grid(row=1, column=1, sticky="ns", pady=(5, 0))
+        top_scroll.grid(row=1, column=1, sticky="ns", pady=(3, 0))
         self.top_folders_tree.configure(yscrollcommand=top_scroll.set)
+
+        # Double-click in Top folders → open folder
+        self.top_folders_tree.bind("<Double-1>", self._on_top_folder_double_click)
 
         # Text log under notebook
         self.log_text = tk.Text(frame_log, height=6, wrap="word")
-        self.log_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=3, pady=(0, 3))
         log_scroll = ttk.Scrollbar(frame_log, command=self.log_text.yview)
-        log_scroll.grid(row=1, column=1, sticky="ns", pady=(0, 5))
+        log_scroll.grid(row=1, column=1, sticky="ns", pady=(0, 3))
         self.log_text["yscrollcommand"] = log_scroll.set
 
         # Adjust text widget to dark mode
@@ -522,17 +593,17 @@ class DiskraddareGUI:
 
         # Progress bar + labels at the bottom
         frame_prog = ttk.Frame(self.root)
-        frame_prog.grid(row=4, column=0, sticky="ew", padx=5, pady=5)
+        frame_prog.grid(row=4, column=0, sticky="ew", padx=3, pady=3)
         frame_prog.columnconfigure(0, weight=1)
 
         self.progress_bar = ttk.Progressbar(frame_prog, mode="indeterminate")
-        self.progress_bar.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+        self.progress_bar.grid(row=0, column=0, sticky="ew", padx=3, pady=2)
 
         self.progress_label = ttk.Label(frame_prog, text="No active process.")
-        self.progress_label.grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.progress_label.grid(row=1, column=0, sticky="w", padx=3, pady=2)
 
         self.current_file_label = ttk.Label(frame_prog, text="File: -")
-        self.current_file_label.grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.current_file_label.grid(row=2, column=0, sticky="w", padx=3, pady=2)
 
         self.pause_button = ttk.Button(
             frame_prog,
@@ -540,7 +611,7 @@ class DiskraddareGUI:
             command=self.toggle_pause,
             state="disabled",
         )
-        self.pause_button.grid(row=3, column=0, sticky="e", padx=5, pady=2)
+        self.pause_button.grid(row=3, column=0, sticky="e", padx=3, pady=2)
 
         self._append_log("Welcome to DiskSaverDX GUI.\n")
 
@@ -577,6 +648,27 @@ class DiskraddareGUI:
     def _on_use_hash_change(self):
         if not self.use_hash_var.get():
             self.hash_only_var.set(False)
+
+    def _open_in_explorer(self, path: Path) -> None:
+        """Open a folder or file in the system file explorer."""
+        try:
+            if os.name == "nt":
+                # Windows
+                os.startfile(str(path))
+            else:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", str(path)])
+                else:
+                    subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:
+            messagebox.showerror(
+                "Open folder",
+                f"Could not open:\n{path}\n\n{e}",
+            )
+
+    def open_log_folder(self):
+        """Open the folder where logs are stored (current working directory)."""
+        self._open_in_explorer(Path.cwd())
 
     # ---- Tree sorting helpers ----
 
@@ -843,6 +935,29 @@ class DiskraddareGUI:
         """Called when the radiobutton for view mode changes."""
         if self.analysis_results is not None:
             self._update_top_folders()
+
+    def _on_top_folder_double_click(self, event):
+        """Open the selected top folder in the system file explorer."""
+        if self.top_folders_tree is None:
+            return
+
+        item_id = self.top_folders_tree.focus()
+        if not item_id:
+            return
+
+        folder_str = self.top_folders_tree.set(item_id, "folder")
+        if not folder_str:
+            return
+
+        path = Path(folder_str)
+        if not path.exists():
+            messagebox.showerror(
+                "Open folder",
+                f"Folder does not exist:\n{folder_str}",
+            )
+            return
+
+        self._open_in_explorer(path)
 
     # ----------- Path choosers -----------
 
